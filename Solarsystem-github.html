@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orbital Mechanics Simulator — Solar System</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI', Arial, sans-serif; background:#04050c; color:#dde; overflow:hidden; height:100vh; }
+  #space { display:block; cursor:crosshair; }
+  #hdr { position:fixed; top:10px; left:16px; z-index:5; pointer-events:none; }
+  #hdr h1 { font-size:17px; letter-spacing:1.5px; color:#ffd966; font-weight:600; }
+  #hdr p { font-size:11px; color:#7788aa; }
+  #date { position:fixed; top:10px; right:16px; z-index:5; text-align:right; font-variant-numeric:tabular-nums; }
+  #date .d { font-size:15px; color:#ffd966; }
+  #date .jd { font-size:10.5px; color:#7788aa; }
+  #controls {
+    position:fixed; bottom:12px; left:50%; transform:translateX(-50%);
+    background:rgba(12,16,34,.88); border:1px solid #28335e; border-radius:12px;
+    padding:9px 14px; display:flex; align-items:center; gap:14px; z-index:5;
+    backdrop-filter:blur(6px); flex-wrap:wrap; justify-content:center; max-width:96vw;
+  }
+  .ctl { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .ctl label { font-size:10px; color:#8899bb; text-transform:uppercase; letter-spacing:.5px; }
+  .ctl .val { font-size:10.5px; color:#cdd; font-variant-numeric:tabular-nums; }
+  button { background:#1b2750; color:#fff; border:1px solid #36468a; border-radius:7px;
+    padding:5px 11px; cursor:pointer; font-size:12px; }
+  button:hover { background:#27366e; }
+  button.active { background:#46599f; }
+  input[type=range] { width:100px; accent-color:#ffd966; }
+  #panel {
+    position:fixed; top:54px; right:16px; width:300px; max-height:calc(100vh - 140px);
+    overflow-y:auto; background:rgba(12,16,34,.93); border:1px solid #36468a;
+    border-radius:12px; padding:14px 16px; z-index:6; display:none; backdrop-filter:blur(6px);
+    font-size:12px;
+  }
+  #panel h2 { font-size:19px; margin-bottom:1px; }
+  #panel .sub { font-size:10.5px; color:#7788aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+  #panel h3 { font-size:11px; color:#ffd966; text-transform:uppercase; letter-spacing:1px;
+    margin:10px 0 4px; border-bottom:1px solid #28335e; padding-bottom:3px; }
+  #panel table { width:100%; border-collapse:collapse; }
+  #panel td { padding:2px 0; vertical-align:top; font-variant-numeric:tabular-nums; }
+  #panel td:first-child { color:#8899bb; width:52%; }
+  #panel .live td:last-child { color:#9fe3a8; }
+  #panel .note { margin-top:9px; font-size:11.5px; line-height:1.45; color:#bcd;
+    background:rgba(255,217,102,.07); border-left:3px solid #ffd966; padding:7px 9px; border-radius:0 7px 7px 0; }
+  #panel .close { position:absolute; top:7px; right:10px; cursor:pointer; color:#8899bb;
+    font-size:17px; background:none; border:none; padding:2px 6px; }
+  #kepler {
+    position:fixed; bottom:74px; left:16px; background:rgba(12,16,34,.93);
+    border:1px solid #36468a; border-radius:12px; padding:10px; z-index:6; display:none;
+  }
+  #kepler .cap { font-size:10.5px; color:#8899bb; text-align:center; margin-top:4px; }
+  #hint { position:fixed; bottom:74px; left:50%; transform:translateX(-50%);
+    font-size:11px; color:#556; z-index:4; pointer-events:none; }
+</style>
+</head>
+<body>
+<canvas id="space"></canvas>
+<div id="hdr">
+  <h1>ORBITAL MECHANICS SIMULATOR</h1>
+  <p>Heliocentric positions from J2000 osculating elements · Kepler's equation solved numerically</p>
+</div>
+<div id="date"><div class="d" id="dateStr"></div><div class="jd" id="jdStr"></div></div>
+<div id="hint">Click a body for orbital elements &amp; live state vectors</div>
+<div id="controls">
+  <button id="pauseBtn">&#10074;&#10074; Pause</button>
+  <button id="todayBtn">Today</button>
+  <div class="ctl"><label>Time warp</label>
+    <input type="range" id="warp" min="-1" max="3.5" step="0.05" value="1">
+    <span class="val" id="warpVal"></span></div>
+  <div class="ctl"><label>View tilt</label>
+    <input type="range" id="tilt" min="0" max="85" step="1" value="0">
+    <span class="val" id="tiltVal">0° (top-down)</span></div>
+  <button id="scaleBtn">Scale: log</button>
+  <button id="labelsBtn" class="active">Labels</button>
+  <button id="keplerBtn">Kepler III</button>
+</div>
+<div id="kepler">
+  <canvas id="kcanvas" width="250" height="210"></canvas>
+  <div class="cap">log T vs log a — slope 3/2 (T² ∝ a³)</div>
+</div>
+<div id="panel">
+  <button class="close" onclick="hidePanel()">&times;</button>
+  <h2 id="p-name"></h2>
+  <div class="sub" id="p-type"></div>
+  <h3>Live state (computed)</h3>
+  <table class="live">
+    <tr><td>Heliocentric distance r</td><td id="p-r"></td></tr>
+    <tr><td>Orbital speed (vis-viva)</td><td id="p-v"></td></tr>
+    <tr><td>True anomaly ν</td><td id="p-nu"></td></tr>
+    <tr><td>Mean anomaly M</td><td id="p-M"></td></tr>
+    <tr><td>Eccentric anomaly E</td><td id="p-E"></td></tr>
+  </table>
+  <h3>Orbital elements (J2000)</h3>
+  <table>
+    <tr><td>Semi-major axis a</td><td id="p-a"></td></tr>
+    <tr><td>Eccentricity e</td><td id="p-e"></td></tr>
+    <tr><td>Inclination i</td><td id="p-i"></td></tr>
+    <tr><td>Long. asc. node Ω</td><td id="p-O"></td></tr>
+    <tr><td>Long. perihelion ϖ</td><td id="p-w"></td></tr>
+    <tr><td>Sidereal period T</td><td id="p-T"></td></tr>
+    <tr><td>Perihelion / aphelion</td><td id="p-qQ"></td></tr>
+  </table>
+  <h3>Physical properties</h3>
+  <table>
+    <tr><td>Mass</td><td id="p-mass"></td></tr>
+    <tr><td>Mean radius</td><td id="p-rad"></td></tr>
+    <tr><td>Bulk density</td><td id="p-rho"></td></tr>
+    <tr><td>Surface gravity</td><td id="p-g"></td></tr>
+    <tr><td>Escape velocity</td><td id="p-vesc"></td></tr>
+    <tr><td>Axial tilt (obliquity)</td><td id="p-obl"></td></tr>
+    <tr><td>Mean temperature</td><td id="p-temp"></td></tr>
+  </table>
+  <div class="note" id="p-note"></div>
+</div>
+<script>
+'use strict';
+const canvas = document.getElementById('space');
+const ctx = canvas.getContext('2d');
+let W, H, CX, CY;
+function resize(){ W=canvas.width=innerWidth; H=canvas.height=innerHeight; CX=W/2; CY=H/2; }
+resize(); addEventListener('resize', resize);
+
+const DEG = Math.PI/180;
+const GM_AU = 29.7847; // Earth's mean orbital speed km/s; v = 29.7847*sqrt(2/r - 1/a) [AU]
+
+// J2000 osculating elements: a (AU), e, i, Ω, ϖ (longitude of perihelion), L0 (mean longitude), T (days)
+const bodies = [
+{ name:'Mercury', type:'Terrestrial planet', color:'#b5a08c', size:3.2,
+  a:0.38710, e:0.20563, i:7.005, O:48.331, w:77.456, L0:252.251, T:87.969,
+  mass:'3.301×10²³ kg', rad:'2,439.7 km', rho:'5.43 g/cm³', g:'3.70 m/s²', vesc:'4.25 km/s', obl:'0.03°', temp:'440 K (mean)',
+  note:'In a 3:2 spin–orbit resonance: three rotations every two orbits. Its perihelion precesses 43″/century beyond Newtonian prediction — a classic confirmation of general relativity.' },
+{ name:'Venus', type:'Terrestrial planet', color:'#e6c87a', size:5,
+  a:0.72333, e:0.00677, i:3.395, O:76.680, w:131.533, L0:181.979, T:224.701,
+  mass:'4.867×10²⁴ kg', rad:'6,051.8 km', rho:'5.24 g/cm³', g:'8.87 m/s²', vesc:'10.36 km/s', obl:'177.4° (retrograde)', temp:'737 K (surface)',
+  note:'Runaway greenhouse: ~92 bar CO₂ atmosphere yields the highest surface temperature of any planet. Rotates retrograde with a sidereal day (243 d) longer than its year.' },
+{ name:'Earth', type:'Terrestrial planet', color:'#5b9bd5', size:5.3,
+  a:1.00000, e:0.01671, i:0.000, O:0.0, w:102.937, L0:100.464, T:365.256,
+  mass:'5.972×10²⁴ kg', rad:'6,371.0 km', rho:'5.51 g/cm³ (densest)', g:'9.81 m/s²', vesc:'11.19 km/s', obl:'23.44°', temp:'288 K (mean)',
+  note:'Defines the AU and the ecliptic reference plane (hence i ≈ 0). The Moon raises tides that transfer angular momentum, lengthening the day ~1.7 ms/century.' },
+{ name:'Mars', type:'Terrestrial planet', color:'#d1603d', size:4,
+  a:1.52368, e:0.09340, i:1.850, O:49.558, w:336.041, L0:355.453, T:686.980,
+  mass:'6.417×10²³ kg', rad:'3,389.5 km', rho:'3.93 g/cm³', g:'3.71 m/s²', vesc:'5.03 km/s', obl:'25.19°', temp:'210 K (mean)',
+  note:'Notably eccentric orbit (e ≈ 0.093): solar flux varies ~45% between perihelion and aphelion, driving strong seasonal asymmetry and global dust storms.' },
+{ name:'Jupiter', type:'Gas giant', color:'#d9a066', size:11,
+  a:5.20260, e:0.04849, i:1.303, O:100.464, w:14.331, L0:34.396, T:4332.59,
+  mass:'1.898×10²⁷ kg (318 M⊕)', rad:'69,911 km', rho:'1.33 g/cm³', g:'24.79 m/s²', vesc:'59.5 km/s', obl:'3.13°', temp:'165 K (1 bar level)',
+  note:'Contains more than twice the mass of all other planets combined; the Sun–Jupiter barycenter lies just outside the solar photosphere. Its 1:2:4 Laplace resonance locks Io, Europa, and Ganymede.' },
+{ name:'Saturn', type:'Gas giant', color:'#e8d6a0', size:9.5, rings:true,
+  a:9.55491, e:0.05551, i:2.489, O:113.666, w:93.057, L0:49.954, T:10759.2,
+  mass:'5.683×10²⁶ kg (95 M⊕)', rad:'58,232 km', rho:'0.687 g/cm³ (< water)', g:'10.44 m/s²', vesc:'35.5 km/s', obl:'26.73°', temp:'134 K (1 bar level)',
+  note:'Ring system is >99% water ice, mostly inside the Roche limit where tidal stress prevents accretion. Radiates ~2.5× the energy it receives — ongoing helium differentiation.' },
+{ name:'Uranus', type:'Ice giant', color:'#9fd8db', size:7,
+  a:19.21845, e:0.04630, i:0.773, O:74.006, w:173.005, L0:313.238, T:30688.5,
+  mass:'8.681×10²⁵ kg (14.5 M⊕)', rad:'25,362 km', rho:'1.27 g/cm³', g:'8.87 m/s²', vesc:'21.3 km/s', obl:'97.77°', temp:'76 K (1 bar level)',
+  note:'Obliquity of ~98° means it orbits essentially on its side, likely from a giant impact; each pole gets 42 years of continuous sunlight. Anomalously low internal heat flux.' },
+{ name:'Neptune', type:'Ice giant', color:'#4f6fd8', size:6.8,
+  a:30.11039, e:0.00899, i:1.770, O:131.784, w:48.124, L0:304.880, T:60182,
+  mass:'1.024×10²⁶ kg (17.1 M⊕)', rad:'24,622 km', rho:'1.64 g/cm³', g:'11.15 m/s²', vesc:'23.5 km/s', obl:'28.32°', temp:'72 K (1 bar level)',
+  note:'Discovered in 1846 from perturbations of Uranus — predicted mathematically by Le Verrier before observation. Supersonic winds exceed 2,000 km/h despite minimal solar input.' },
+{ name:'Pluto', type:'Dwarf planet (KBO)', color:'#c9b29a', size:2.6,
+  a:39.482, e:0.2488, i:17.16, O:110.299, w:224.069, L0:238.929, T:90560,
+  mass:'1.303×10²² kg', rad:'1,188.3 km', rho:'1.85 g/cm³', g:'0.62 m/s²', vesc:'1.21 km/s', obl:'122.5°', temp:'44 K (mean)',
+  note:'In a 2:3 mean-motion resonance with Neptune — they can never collide despite crossing orbits. High e and i are typical of Kuiper Belt objects; reclassified as a dwarf planet in 2006 (IAU).' },
+];
+
+// ---------- Kepler machinery ----------
+function solveKepler(M, e){           // M in radians → eccentric anomaly E
+  let E = e < 0.8 ? M : Math.PI;
+  for (let k=0; k<10; k++) E -= (E - e*Math.sin(E) - M) / (1 - e*Math.cos(E));
+  return E;
+}
+function stateAt(b, d){               // d = days since J2000 → heliocentric ecliptic xyz (AU) + anomalies
+  const n = 360 / b.T;                // mean motion deg/day
+  let M = (b.L0 - b.w + n*d) % 360; if (M < 0) M += 360;
+  const Mr = M * DEG;
+  const E = solveKepler(Mr, b.e);
+  const nu = 2 * Math.atan2(Math.sqrt(1+b.e)*Math.sin(E/2), Math.sqrt(1-b.e)*Math.cos(E/2));
+  const r = b.a * (1 - b.e*Math.cos(E));
+  const om = (b.w - b.O) * DEG;       // argument of perihelion
+  const Om = b.O * DEG, inc = b.i * DEG;
+  const u = om + nu;
+  const x = r * (Math.cos(Om)*Math.cos(u) - Math.sin(Om)*Math.sin(u)*Math.cos(inc));
+  const y = r * (Math.sin(Om)*Math.cos(u) + Math.cos(Om)*Math.sin(u)*Math.cos(inc));
+  const z = r * Math.sin(u)*Math.sin(inc);
+  return { x, y, z, r, nu, E, M: Mr };
+}
+function visViva(r, a){ return GM_AU * Math.sqrt(Math.max(0, 2/r - 1/a)); } // km/s
+
+// ---------- display mapping ----------
+let useLog = true, tiltDeg = 0, showLabels = true, paused = false;
+function rScale(rAU){                 // AU → px
+  const span = Math.min(W, H) * 0.47;
+  if (useLog) return span * Math.log10(1 + rAU/0.30) / Math.log10(1 + 41/0.30);
+  return span * rAU / 41;
+}
+function project(p){                  // scaled 3D → screen (rotate about x-axis by tilt)
+  const f = p.r > 1e-9 ? rScale(p.r) / p.r : 0;
+  const X = p.x*f, Y = p.y*f, Z = p.z*f;
+  const t = tiltDeg * DEG;
+  return { sx: CX + X, sy: CY - (Y*Math.cos(t) + Z*Math.sin(t)) };
+}
+
+// ---------- time ----------
+const J2000_MS = Date.UTC(2000,0,1,12);
+let simDays = (Date.now() - J2000_MS) / 86400000;
+let warpExp = 1;                      // log10(days per second)
+function warpDaysPerSec(){ return Math.pow(10, warpExp); }
+
+// ---------- starfield ----------
+const stars = Array.from({length:260}, () => ({ x:Math.random(), y:Math.random(), r:Math.random()*1.2+0.3, a:Math.random()*0.5+0.25 }));
+
+let selected = null, last = performance.now();
+
+function draw(now){
+  const dt = Math.min(0.1, (now - last)/1000); last = now;
+  if (!paused) simDays += warpDaysPerSec() * dt;
+
+  ctx.fillStyle = '#04050c'; ctx.fillRect(0,0,W,H);
+  ctx.save();
+  stars.forEach(s => { ctx.fillStyle=`rgba(255,255,255,${s.a})`; ctx.beginPath(); ctx.arc(s.x*W, s.y*H, s.r, 0, 6.2832); ctx.fill(); });
+  ctx.restore();
+
+  // orbit paths (sampled in true anomaly so ellipses + inclination render exactly)
+  bodies.forEach(b => {
+    ctx.strokeStyle = selected===b ? 'rgba(255,217,102,.55)' : 'rgba(110,130,190,.22)';
+    ctx.lineWidth = selected===b ? 1.4 : 1;
+    ctx.beginPath();
+    const om=(b.w-b.O)*DEG, Om=b.O*DEG, inc=b.i*DEG;
+    for (let k=0; k<=180; k++){
+      const nu = k/180 * 2*Math.PI;
+      const r = b.a*(1-b.e*b.e)/(1+b.e*Math.cos(nu));
+      const u = om+nu;
+      const p = project({ x:r*(Math.cos(Om)*Math.cos(u)-Math.sin(Om)*Math.sin(u)*Math.cos(inc)),
+                          y:r*(Math.sin(Om)*Math.cos(u)+Math.cos(Om)*Math.sin(u)*Math.cos(inc)),
+                          z:r*Math.sin(u)*Math.sin(inc), r });
+      k===0 ? ctx.moveTo(p.sx,p.sy) : ctx.lineTo(p.sx,p.sy);
+    }
+    ctx.closePath(); ctx.stroke();
+
+    // perihelion / aphelion markers for the selected body
+    if (selected===b){
+      [[0,'q'],[Math.PI,'Q']].forEach(([nu,lab])=>{
+        const r=b.a*(1-b.e*b.e)/(1+b.e*Math.cos(nu)), u=om+nu;
+        const p=project({ x:r*(Math.cos(Om)*Math.cos(u)-Math.sin(Om)*Math.sin(u)*Math.cos(inc)),
+                          y:r*(Math.sin(Om)*Math.cos(u)+Math.cos(Om)*Math.sin(u)*Math.cos(inc)),
+                          z:r*Math.sin(u)*Math.sin(inc), r });
+        ctx.fillStyle='#ffd966'; ctx.beginPath(); ctx.arc(p.sx,p.sy,2.5,0,6.2832); ctx.fill();
+        ctx.font='10px Segoe UI'; ctx.textAlign='center'; ctx.fillText(lab, p.sx, p.sy-6);
+      });
+    }
+  });
+
+  // Sun
+  const g = ctx.createRadialGradient(CX,CY,0,CX,CY,30);
+  g.addColorStop(0,'#fff8d0'); g.addColorStop(.4,'#ffd24d'); g.addColorStop(1,'rgba(255,140,30,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(CX,CY,30,0,6.2832); ctx.fill();
+
+  // bodies
+  bodies.forEach(b => {
+    const st = stateAt(b, simDays);
+    const p = project(st);
+    b._sx=p.sx; b._sy=p.sy; b._st=st;
+    if (b.rings){
+      ctx.strokeStyle='rgba(232,214,160,.65)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.ellipse(p.sx,p.sy,b.size*1.9,b.size*0.65,-0.4,0,6.2832); ctx.stroke();
+    }
+    const pg=ctx.createRadialGradient(p.sx-b.size*.3,p.sy-b.size*.3,b.size*.1,p.sx,p.sy,b.size);
+    pg.addColorStop(0,'#fff'); pg.addColorStop(.25,b.color); pg.addColorStop(1,b.color);
+    ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(p.sx,p.sy,b.size,0,6.2832); ctx.fill();
+    if (selected===b){ ctx.strokeStyle='#ffd966'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(p.sx,p.sy,b.size+4,0,6.2832); ctx.stroke(); }
+    if (showLabels){ ctx.fillStyle='#bcd'; ctx.font='10.5px Segoe UI'; ctx.textAlign='center';
+      ctx.fillText(b.name, p.sx, p.sy+b.size+12); }
+  });
+
+  // date readout
+  const ms = J2000_MS + simDays*86400000;
+  document.getElementById('dateStr').textContent =
+    new Date(ms).toISOString().slice(0,10) + ' ' + new Date(ms).toISOString().slice(11,16) + ' UTC';
+  document.getElementById('jdStr').textContent = 'JD ' + (2451545 + simDays).toFixed(2);
+
+  if (selected) updatePanelLive(selected);
+  requestAnimationFrame(draw);
+}
+
+// ---------- interaction ----------
+canvas.addEventListener('click', e => {
+  const hit = bodies.find(b => Math.hypot(e.clientX-b._sx, e.clientY-b._sy) < b.size+9);
+  hit ? showPanel(hit) : hidePanel();
+});
+function showPanel(b){
+  selected = b;
+  const $ = id => document.getElementById(id);
+  $('p-name').textContent=b.name; $('p-name').style.color=b.color;
+  $('p-type').textContent=b.type;
+  $('p-a').textContent=b.a.toFixed(4)+' AU';
+  $('p-e').textContent=b.e.toFixed(4);
+  $('p-i').textContent=b.i.toFixed(2)+'° (to ecliptic)';
+  $('p-O').textContent=b.O.toFixed(2)+'°';
+  $('p-w').textContent=b.w.toFixed(2)+'°';
+  $('p-T').textContent = b.T<1000 ? b.T.toFixed(1)+' d' : (b.T/365.25).toFixed(2)+' yr';
+  $('p-qQ').textContent=(b.a*(1-b.e)).toFixed(2)+' / '+(b.a*(1+b.e)).toFixed(2)+' AU';
+  $('p-mass').textContent=b.mass; $('p-rad').textContent=b.rad; $('p-rho').textContent=b.rho;
+  $('p-g').textContent=b.g; $('p-vesc').textContent=b.vesc; $('p-obl').textContent=b.obl;
+  $('p-temp').textContent=b.temp; $('p-note').textContent=b.note;
+  document.getElementById('panel').style.display='block';
+  updatePanelLive(b);
+}
+function updatePanelLive(b){
+  if (!b._st) return;
+  const $ = id => document.getElementById(id);
+  const deg = x => ((x/DEG)%360+360)%360;
+  $('p-r').textContent=b._st.r.toFixed(4)+' AU';
+  $('p-v').textContent=visViva(b._st.r, b.a).toFixed(2)+' km/s';
+  $('p-nu').textContent=deg(b._st.nu).toFixed(1)+'°';
+  $('p-M').textContent=deg(b._st.M).toFixed(1)+'°';
+  $('p-E').textContent=deg(b._st.E).toFixed(1)+'°';
+}
+function hidePanel(){ selected=null; document.getElementById('panel').style.display='none'; }
+
+// ---------- controls ----------
+const warpVal=document.getElementById('warpVal');
+function fmtWarp(){
+  const d=warpDaysPerSec();
+  warpVal.textContent = d<1 ? (d*24).toFixed(1)+' hr/s' : d<365 ? d.toFixed(1)+' d/s' : (d/365.25).toFixed(1)+' yr/s';
+}
+fmtWarp();
+document.getElementById('warp').oninput=function(){ warpExp=+this.value; fmtWarp(); };
+document.getElementById('tilt').oninput=function(){
+  tiltDeg=+this.value;
+  document.getElementById('tiltVal').textContent=tiltDeg+(tiltDeg==0?'° (top-down)':tiltDeg>=80?'° (near edge-on)':'°');
+};
+document.getElementById('pauseBtn').onclick=function(){
+  paused=!paused; this.innerHTML=paused?'&#9654; Play':'&#10074;&#10074; Pause'; };
+document.getElementById('todayBtn').onclick=()=>{ simDays=(Date.now()-J2000_MS)/86400000; };
+document.getElementById('scaleBtn').onclick=function(){
+  useLog=!useLog; this.textContent='Scale: '+(useLog?'log':'linear'); };
+document.getElementById('labelsBtn').onclick=function(){
+  showLabels=!showLabels; this.classList.toggle('active'); };
+
+// ---------- Kepler III inset ----------
+document.getElementById('keplerBtn').onclick=function(){
+  const k=document.getElementById('kepler');
+  const show=k.style.display!=='block';
+  k.style.display=show?'block':'none'; this.classList.toggle('active',show);
+  if (show) drawKepler();
+};
+function drawKepler(){
+  const kc=document.getElementById('kcanvas'), c=kc.getContext('2d');
+  const Wk=kc.width, Hk=kc.height, m={l:34,r:10,t:10,b:26};
+  c.clearRect(0,0,Wk,Hk);
+  const lx=v=>m.l+(Math.log10(v)-Math.log10(0.3))/(Math.log10(45)-Math.log10(0.3))*(Wk-m.l-m.r);
+  const ly=v=>Hk-m.b-(Math.log10(v)-Math.log10(0.2))/(Math.log10(300)-Math.log10(0.2))*(Hk-m.t-m.b);
+  c.strokeStyle='#28335e'; c.fillStyle='#7788aa'; c.font='9px Segoe UI'; c.lineWidth=1;
+  [0.5,1,5,10,40].forEach(v=>{ c.beginPath(); c.moveTo(lx(v),m.t); c.lineTo(lx(v),Hk-m.b); c.stroke();
+    c.textAlign='center'; c.fillText(v,lx(v),Hk-m.b+12); });
+  [1,10,100].forEach(v=>{ c.beginPath(); c.moveTo(m.l,ly(v)); c.lineTo(Wk-m.r,ly(v)); c.stroke();
+    c.textAlign='right'; c.fillText(v,m.l-4,ly(v)+3); });
+  c.fillText('a (AU)',Wk/2+30,Hk-3); c.save(); c.translate(9,Hk/2); c.rotate(-Math.PI/2);
+  c.textAlign='center'; c.fillText('T (yr)',0,0); c.restore();
+  // T = a^1.5 line
+  c.strokeStyle='rgba(255,217,102,.5)'; c.beginPath();
+  let first=true;
+  for(let a=0.3;a<=45;a*=1.1){ const T=Math.pow(a,1.5); if(T<0.2||T>300) continue;
+    first?c.moveTo(lx(a),ly(T)):c.lineTo(lx(a),ly(T)); first=false; }
+  c.stroke();
+  bodies.forEach(b=>{ const Tyr=b.T/365.25;
+    c.fillStyle=b.color; c.beginPath(); c.arc(lx(b.a),ly(Tyr),3,0,6.2832); c.fill(); });
+}
+
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
